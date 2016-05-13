@@ -145,6 +145,7 @@ function PeerConnection(config, constraints) {
     this.config = {
         debug: false,
         ice: {},
+        remoteIce: {},
         sid: '',
         isInitiator: true,
         sdpSessionID: Date.now(),
@@ -252,24 +253,62 @@ PeerConnection.prototype.processIce = function (update, cb) {
             var candidates = transport.candidates || [];
             var mline = contentNames.indexOf(content.name);
             var mid = content.name;
-
-            candidates.forEach(
-                function (candidate) {
-                var iceCandidate = SJJ.toCandidateSDP(candidate) + '\r\n';
-                self.pc.addIceCandidate(
-                    new RTCIceCandidate({
-                        candidate: iceCandidate,
-                        sdpMLineIndex: mline,
-                        sdpMid: mid
-                    }), function () {
-                        // well, this success callback is pretty meaningless
-                    },
-                    function (err) {
-                        self.emit('error', err);
-                    }
-                );
-                self._checkRemoteCandidate(iceCandidate);
+            var remoteContent = self.remoteDescription.contents.find(function (c) {
+                return c.name === content.name;
             });
+
+            // process candidates as a callback, in case we need to
+            // update ufrag and pwd with offer/answer
+            var processCandidates = function () {
+                candidates.forEach(
+                    function (candidate) {
+                    var iceCandidate = SJJ.toCandidateSDP(candidate) + '\r\n';
+                    self.pc.addIceCandidate(
+                        new RTCIceCandidate({
+                            candidate: iceCandidate,
+                            sdpMLineIndex: mline,
+                            sdpMid: mid
+                        }), function () {
+                            // well, this success callback is pretty meaningless
+                        },
+                        function (err) {
+                            self.emit('error', err);
+                        }
+                    );
+                    self._checkRemoteCandidate(iceCandidate);
+                });
+            };
+
+            if (self.config.remoteIce[content.name] && transport.ufrag &&
+                self.config.remoteIce[content.name].ufrag !== transport.ufrag) {
+                console.log('ice restart needed', transport);
+                if (remoteContent) {
+                    remoteContent.transport.ufrag = transport.ufrag;
+                    remoteContent.transport.pwd = transport.pwd;
+                    var offer = {
+                        type: 'offer',
+                        jingle: self.remoteDescription
+                    };
+                    offer.sdp = SJJ.toSessionSDP(offer.jingle, {
+                        sid: self.config.sdpSessionID,
+                        role: self._role(),
+                        direction: 'incoming'
+                    });
+                    self.pc.setRemoteDescription(new RTCSessionDescription(offer),
+                        function () {
+                            console.log('ice success updating remote desctipion');
+                            processCandidates();
+                        },
+                        function (err) {
+                            console.error('ice failed to update remote description', err);
+                        }
+                    );
+                } else {
+                    console.error('ice failed to find matching content');
+                }
+            } else {
+                processCandidates();
+            }
         });
     } else {
         // working around https://code.google.com/p/webrtc/issues/detail?id=3669
@@ -388,6 +427,7 @@ PeerConnection.prototype.handleOffer = function (offer, cb) {
                 if (content.name === 'video') {
                     content.description.googConferenceFlag = true;
                 }
+
             });
         }
         if (this.enableMultiStreamHacks) {
@@ -428,6 +468,16 @@ PeerConnection.prototype.handleOffer = function (offer, cb) {
                 }
             }
         }
+        // Save ICE credentials
+        each(offer.jingle.contents, function (content) {
+            var transport = content.transport || {};
+            if (transport.ufrag) {
+                self.config.remoteIce[content.name] = {
+                    ufrag: transport.ufrag,
+                    pwd: transport.pwd
+                };
+            }
+        });
         offer.sdp = SJJ.toSessionSDP(offer.jingle, {
             sid: self.config.sdpSessionID,
             role: self._role(),
@@ -495,6 +545,17 @@ PeerConnection.prototype.handleAnswer = function (answer, cb) {
             direction: 'incoming'
         });
         self.remoteDescription = answer.jingle;
+
+        // Save ICE credentials
+        each(answer.jingle.contents, function (content) {
+            var transport = content.transport || {};
+            if (transport.ufrag) {
+                self.config.remoteIce[content.name] = {
+                    ufrag: transport.ufrag,
+                    pwd: transport.pwd
+                };
+            }
+        });
     }
     answer.sdp.split('\r\n').forEach(function (line) {
         if (line.indexOf('a=candidate:') === 0) {
