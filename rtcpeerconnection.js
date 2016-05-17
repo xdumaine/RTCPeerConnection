@@ -298,7 +298,9 @@ PeerConnection.prototype.processIce = function (update, cb) {
                     });
                     self.pc.setRemoteDescription(new RTCSessionDescription(offer),
                         function () {
-                            processCandidates();
+                            self._answer(self.answerConstraints, function () {
+                                processCandidates();
+                            });
                         },
                         function (err) {
                             self.emit('error', err);
@@ -608,6 +610,8 @@ PeerConnection.prototype._answer = function (constraints, cb) {
     }
 
     if (this.pc.signalingState === 'closed') return cb('Already closed');
+
+    self.answerConstraints = constraints;
 
     self.pc.createAnswer(
         function (answer) {
