@@ -144,12 +144,15 @@ function PeerConnection(config, constraints) {
 
     this.config = {
         debug: false,
-        ice: {},
-        remoteIce: {},
         sid: '',
         isInitiator: true,
         sdpSessionID: Date.now(),
         useJingle: false
+    };
+
+    this.iceCredentials = {
+        local: {},
+        remote: {}
     };
 
     // apply our config
@@ -279,9 +282,8 @@ PeerConnection.prototype.processIce = function (update, cb) {
                 });
             };
 
-            if (self.config.remoteIce[content.name] && transport.ufrag &&
-                self.config.remoteIce[content.name].ufrag !== transport.ufrag) {
-                console.log('ice restart needed', transport);
+            if (self.iceCredentials.remote[content.name] && transport.ufrag &&
+                self.iceCredentials.remote[content.name].ufrag !== transport.ufrag) {
                 if (remoteContent) {
                     remoteContent.transport.ufrag = transport.ufrag;
                     remoteContent.transport.pwd = transport.pwd;
@@ -296,15 +298,14 @@ PeerConnection.prototype.processIce = function (update, cb) {
                     });
                     self.pc.setRemoteDescription(new RTCSessionDescription(offer),
                         function () {
-                            console.log('ice success updating remote desctipion');
                             processCandidates();
                         },
                         function (err) {
-                            console.error('ice failed to update remote description', err);
+                            self.emit('error', err);
                         }
                     );
                 } else {
-                    console.error('ice failed to find matching content');
+                    self.emit('error', 'ice restart failed to find matching content');
                 }
             } else {
                 processCandidates();
@@ -380,7 +381,7 @@ PeerConnection.prototype.offer = function (constraints, cb) {
                         each(jingle.contents, function (content) {
                             var transport = content.transport || {};
                             if (transport.ufrag) {
-                                self.config.ice[content.name] = {
+                                self.iceCredentials.local[content.name] = {
                                     ufrag: transport.ufrag,
                                     pwd: transport.pwd
                                 };
@@ -472,7 +473,7 @@ PeerConnection.prototype.handleOffer = function (offer, cb) {
         each(offer.jingle.contents, function (content) {
             var transport = content.transport || {};
             if (transport.ufrag) {
-                self.config.remoteIce[content.name] = {
+                self.iceCredentials.remote[content.name] = {
                     ufrag: transport.ufrag,
                     pwd: transport.pwd
                 };
@@ -550,7 +551,7 @@ PeerConnection.prototype.handleAnswer = function (answer, cb) {
         each(answer.jingle.contents, function (content) {
             var transport = content.transport || {};
             if (transport.ufrag) {
-                self.config.remoteIce[content.name] = {
+                self.iceCredentials.remote[content.name] = {
                     ufrag: transport.ufrag,
                     pwd: transport.pwd
                 };
@@ -792,7 +793,7 @@ PeerConnection.prototype._onIce = function (event) {
                     ice.sdpMid = self.localDescription.contents[ice.sdpMLineIndex].name;
                 }
             }
-            if (!self.config.ice[ice.sdpMid]) {
+            if (!self.iceCredentials.local[ice.sdpMid]) {
                 var jingle = SJJ.toSessionJSON(self.pc.localDescription.sdp, {
                     role: self._role(),
                     direction: 'outgoing'
@@ -800,7 +801,7 @@ PeerConnection.prototype._onIce = function (event) {
                 each(jingle.contents, function (content) {
                     var transport = content.transport || {};
                     if (transport.ufrag) {
-                        self.config.ice[content.name] = {
+                        self.iceCredentials.local[content.name] = {
                             ufrag: transport.ufrag,
                             pwd: transport.pwd
                         };
@@ -813,8 +814,8 @@ PeerConnection.prototype._onIce = function (event) {
                     creator: self._role(),
                     transport: {
                         transType: 'iceUdp',
-                        ufrag: self.config.ice[ice.sdpMid].ufrag,
-                        pwd: self.config.ice[ice.sdpMid].pwd,
+                        ufrag: self.iceCredentials.local[ice.sdpMid].ufrag,
+                        pwd: self.iceCredentials.local[ice.sdpMid].pwd,
                         candidates: [
                             cand
                         ]
