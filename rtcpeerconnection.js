@@ -284,6 +284,10 @@ PeerConnection.prototype.processIce = function (update, cb) {
 
             if (self.iceCredentials.remote[content.name] && transport.ufrag &&
                 self.iceCredentials.remote[content.name].ufrag !== transport.ufrag) {
+                self.iceCredentials.remote[content.name] = {
+                    ufrag: transport.ufrag,
+                    pwd: transport.pwd
+                };
                 if (remoteContent) {
                     remoteContent.transport.ufrag = transport.ufrag;
                     remoteContent.transport.pwd = transport.pwd;
@@ -296,6 +300,8 @@ PeerConnection.prototype.processIce = function (update, cb) {
                         role: self._role(),
                         direction: 'incoming'
                     });
+                    // reset local ice credential cache
+                    self.iceCredentials.local = {};
                     self.pc.setRemoteDescription(new RTCSessionDescription(offer),
                         function () {
                             self._answer(self.answerConstraints, function () {
